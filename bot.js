@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
-const play = require('play-dl');
+const ytdl = require('@distube/ytdl-core');
+const yts = require('yt-search');
 
 const client = new Client({
   intents: [
