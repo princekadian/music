@@ -70,7 +70,14 @@ async function play_song(message, songQuery) {
   let song;
   
   try {
-    // Check if it's a URL or search query
+    // Handle Spotify links - extract song name and search on YouTube
+    if (songQuery.includes('spotify.com')) {
+      message.reply('🔍 Searching for Spotify track on YouTube...');
+      // For now, tell user to search by name instead
+      return message.reply('❌ Spotify links are not supported yet. Please search by song name instead! Example: `>play song name`');
+    }
+    
+    // Check if it's a YouTube URL or search query
     if (ytdl.validateURL(songQuery)) {
       const songInfo = await ytdl.getInfo(songQuery);
       song = {
@@ -94,7 +101,7 @@ async function play_song(message, songQuery) {
       };
     }
   } catch (error) {
-    console.error(error);
+    console.error('Search error:', error);
     return message.reply('❌ Error finding the song!');
   }
 
@@ -122,9 +129,19 @@ async function play_song(message, songQuery) {
 
       connection.subscribe(queueConstructor.player);
 
+      // Handle connection errors
+      connection.on('error', error => {
+        console.error('Connection error:', error);
+        message.channel.send('❌ Voice connection error!');
+      });
+
+      connection.on('stateChange', (oldState, newState) => {
+        console.log(`Connection state: ${oldState.status} -> ${newState.status}`);
+      });
+
       playSong(message.guild, queueConstructor.songs[0]);
     } catch (error) {
-      console.error(error);
+      console.error('Join error:', error);
       queue.delete(message.guild.id);
       return message.reply('❌ Error connecting to voice channel!');
     }
@@ -144,6 +161,8 @@ async function playSong(guild, song) {
   }
 
   try {
+    serverQueue.textChannel.send(`🎶 Now playing: **${song.title}**`);
+
     const stream = ytdl(song.url, {
       filter: 'audioonly',
       quality: 'highestaudio',
@@ -151,11 +170,23 @@ async function playSong(guild, song) {
       dlChunkSize: 0
     });
 
+    // Handle stream errors
+    stream.on('error', error => {
+      console.error('Stream error:', error);
+      serverQueue.textChannel.send('❌ Error streaming audio!');
+      serverQueue.songs.shift();
+      playSong(guild, serverQueue.songs[0]);
+    });
+
     const resource = createAudioResource(stream, {
-      inputType: StreamType.Arbitrary
+      inputType: StreamType.Arbitrary,
+      inlineVolume: true
     });
 
     serverQueue.player.play(resource);
+
+    serverQueue.player.removeAllListeners(AudioPlayerStatus.Idle);
+    serverQueue.player.removeAllListeners('error');
 
     serverQueue.player.on(AudioPlayerStatus.Idle, () => {
       serverQueue.songs.shift();
@@ -164,13 +195,13 @@ async function playSong(guild, song) {
 
     serverQueue.player.on('error', error => {
       console.error('Player error:', error);
+      serverQueue.textChannel.send('❌ Playback error!');
       serverQueue.songs.shift();
       playSong(guild, serverQueue.songs[0]);
     });
 
-    serverQueue.textChannel.send(`🎶 Now playing: **${song.title}**`);
   } catch (error) {
-    console.error('Stream error:', error);
+    console.error('PlaySong error:', error);
     serverQueue.textChannel.send('❌ Error playing the song!');
     serverQueue.songs.shift();
     playSong(guild, serverQueue.songs[0]);
