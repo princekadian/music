@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
-const ytdl = require('ytdl-core');
-const ytSearch = require('yt-search');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
+const play = require('play-dl');
 
 const client = new Client({
   intents: [
@@ -36,7 +35,7 @@ client.on('messageCreate', async (message) => {
     }
 
     const songQuery = args.join(' ');
-    await play(message, songQuery);
+    await play_song(message, songQuery);
   }
 
   if (command === 'skip') {
@@ -63,37 +62,30 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-async function play(message, songQuery) {
+async function play_song(message, songQuery) {
   const voiceChannel = message.member.voice.channel;
   const serverQueue = queue.get(message.guild.id);
 
   let song;
   
   try {
-    if (ytdl.validateURL(songQuery)) {
-      const songInfo = await ytdl.getInfo(songQuery);
-      song = {
-        title: songInfo.videoDetails.title,
-        url: songInfo.videoDetails.video_url,
-        duration: songInfo.videoDetails.lengthSeconds,
-      };
+    // Check if it's a URL or search query
+    let video;
+    if (songQuery.includes('youtube.com') || songQuery.includes('youtu.be')) {
+      video = await play.video_info(songQuery);
     } else {
-      const videoFinder = async (query) => {
-        const videoResult = await ytSearch(query);
-        return videoResult.videos.length > 0 ? videoResult.videos[0] : null;
-      };
-
-      const video = await videoFinder(songQuery);
-      if (!video) {
+      const searched = await play.search(songQuery, { limit: 1 });
+      if (!searched || searched.length === 0) {
         return message.reply('❌ No results found!');
       }
-
-      song = {
-        title: video.title,
-        url: video.url,
-        duration: video.timestamp,
-      };
+      video = searched[0];
     }
+
+    song = {
+      title: video.title,
+      url: video.url,
+      duration: video.durationInSec,
+    };
   } catch (error) {
     console.error(error);
     return message.reply('❌ Error finding the song!');
@@ -135,7 +127,7 @@ async function play(message, songQuery) {
   }
 }
 
-function playSong(guild, song) {
+async function playSong(guild, song) {
   const serverQueue = queue.get(guild.id);
 
   if (!song) {
@@ -144,28 +136,32 @@ function playSong(guild, song) {
     return;
   }
 
-  const stream = ytdl(song.url, { 
-    filter: 'audioonly', 
-    quality: 'highestaudio',
-    highWaterMark: 1 << 25 
-  });
-  
-  const resource = createAudioResource(stream);
+  try {
+    const stream = await play.stream(song.url);
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type
+    });
 
-  serverQueue.player.play(resource);
+    serverQueue.player.play(resource);
 
-  serverQueue.player.on(AudioPlayerStatus.Idle, () => {
+    serverQueue.player.on(AudioPlayerStatus.Idle, () => {
+      serverQueue.songs.shift();
+      playSong(guild, serverQueue.songs[0]);
+    });
+
+    serverQueue.player.on('error', error => {
+      console.error('Player error:', error);
+      serverQueue.songs.shift();
+      playSong(guild, serverQueue.songs[0]);
+    });
+
+    serverQueue.textChannel.send(`🎶 Now playing: **${song.title}**`);
+  } catch (error) {
+    console.error('Stream error:', error);
+    serverQueue.textChannel.send('❌ Error playing the song!');
     serverQueue.songs.shift();
     playSong(guild, serverQueue.songs[0]);
-  });
-
-  serverQueue.player.on('error', error => {
-    console.error('Player error:', error);
-    serverQueue.songs.shift();
-    playSong(guild, serverQueue.songs[0]);
-  });
-
-  serverQueue.textChannel.send(`🎶 Now playing: **${song.title}**`);
+  }
 }
 
 function skip(message) {
@@ -210,4 +206,4 @@ function showQueue(message) {
 }
 
 // Login to Discord
-client.login(process.env.TOKEN || 'MTQzNjg3NTk0NDU3NjE1NTcyMQ.Gj4Ndh.jVZSVOGcXTYA04OLd8aPNWH1dMlVTqlTuY_Q4g');
+client.login(process.env.TOKEN || 'YOUR_BOT_TOKEN_HERE');
