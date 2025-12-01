@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
-const ytdl = require('@distube/ytdl-core');
-const ytsr = require('ytsr');
+const { DisTube } = require('distube');
+const { YtDlpPlugin } = require('@distube/yt-dlp');
 
 const client = new Client({
   intents: [
@@ -12,13 +11,42 @@ const client = new Client({
   ],
 });
 
-const queue = new Map();
+// Initialize DisTube
+const distube = new DisTube(client, {
+  emitNewSongOnly: true,
+  leaveOnFinish: false,
+  leaveOnStop: true,
+  plugins: [new YtDlpPlugin()],
+});
 
 client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   console.log(`Bot is ready and online!`);
 });
 
+// DisTube event listeners
+distube.on('playSong', (queue, song) => {
+  queue.textChannel.send(`🎶 Now playing: **${song.name}** - \`${song.formattedDuration}\``);
+});
+
+distube.on('addSong', (queue, song) => {
+  queue.textChannel.send(`✅ Added to queue: **${song.name}** - \`${song.formattedDuration}\``);
+});
+
+distube.on('error', (channel, error) => {
+  console.error('DisTube error:', error);
+  channel.send('❌ An error occurred while playing music!');
+});
+
+distube.on('searchNoResult', (message, query) => {
+  message.channel.send(`❌ No results found for: **${query}**`);
+});
+
+distube.on('finish', (queue) => {
+  queue.textChannel.send('✅ Queue finished!');
+});
+
+// Message handler
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith('>')) return;
@@ -26,7 +54,7 @@ client.on('messageCreate', async (message) => {
   const args = message.content.slice(1).trim().split(/ +/);
   const command = args.shift().toLowerCase();
 
-  if (command === 'play') {
+  if (command === 'play' || command === 'p') {
     if (!message.member.voice.channel) {
       return message.reply('❌ You need to be in a voice channel!');
     }
@@ -36,222 +64,104 @@ client.on('messageCreate', async (message) => {
     }
 
     const songQuery = args.join(' ');
-    await play_song(message, songQuery);
+
+    // Handle Spotify links
+    if (songQuery.includes('spotify.com')) {
+      return message.reply('❌ Spotify links are not supported. Please search by song name or use a YouTube link!');
+    }
+
+    try {
+      await distube.play(message.member.voice.channel, songQuery, {
+        member: message.member,
+        textChannel: message.channel,
+        message,
+      });
+    } catch (error) {
+      console.error('Play error:', error);
+      message.reply('❌ Error playing the song!');
+    }
   }
 
-  if (command === 'skip') {
-    skip(message);
+  if (command === 'skip' || command === 's') {
+    if (!message.member.voice.channel) {
+      return message.reply('❌ You need to be in a voice channel!');
+    }
+
+    try {
+      const queue = distube.getQueue(message);
+      if (!queue) {
+        return message.reply('❌ Nothing is playing!');
+      }
+      await distube.skip(message);
+      message.reply('⏭️ Skipped!');
+    } catch (error) {
+      message.reply('❌ There is no song to skip!');
+    }
   }
 
   if (command === 'stop') {
-    stop(message);
+    if (!message.member.voice.channel) {
+      return message.reply('❌ You need to be in a voice channel!');
+    }
+
+    try {
+      const queue = distube.getQueue(message);
+      if (!queue) {
+        return message.reply('❌ Nothing is playing!');
+      }
+      await distube.stop(message);
+      message.reply('⏹️ Stopped and disconnected!');
+    } catch (error) {
+      message.reply('❌ Nothing is playing!');
+    }
   }
 
-  if (command === 'queue') {
-    showQueue(message);
+  if (command === 'queue' || command === 'q') {
+    const queue = distube.getQueue(message);
+    if (!queue) {
+      return message.reply('📭 Queue is empty!');
+    }
+
+    const queueList = queue.songs.map((song, index) => 
+      `${index === 0 ? '🎵 **Now Playing:**' : `${index}.`} ${song.name} - \`${song.formattedDuration}\``
+    ).slice(0, 10).join('\n');
+
+    message.reply(`**📃 Current Queue:**\n${queueList}${queue.songs.length > 10 ? `\n... and ${queue.songs.length - 10} more` : ''}`);
   }
 
-  if (command === 'help') {
+  if (command === 'pause') {
+    if (!message.member.voice.channel) {
+      return message.reply('❌ You need to be in a voice channel!');
+    }
+
+    const queue = distube.getQueue(message);
+    if (!queue) {
+      return message.reply('❌ Nothing is playing!');
+    }
+
+    if (queue.paused) {
+      distube.resume(message);
+      message.reply('▶️ Resumed!');
+    } else {
+      distube.pause(message);
+      message.reply('⏸️ Paused!');
+    }
+  }
+
+  if (command === 'help' || command === 'h') {
     message.reply(
       `**🎵 Music Bot Commands:**
-\`>play <song name or URL>\` - Play a song
-\`>skip\` - Skip current song
+\`>play <song name or URL>\` or \`>p\` - Play a song
+\`>skip\` or \`>s\` - Skip current song
 \`>stop\` - Stop music and leave voice channel
-\`>queue\` - Show the current queue
-\`>help\` - Show this message`
+\`>queue\` or \`>q\` - Show the current queue
+\`>pause\` - Pause/Resume playback
+\`>help\` or \`>h\` - Show this message`
     );
   }
 });
 
-async function play_song(message, songQuery) {
-  const voiceChannel = message.member.voice.channel;
-  const serverQueue = queue.get(message.guild.id);
-
-  let song;
-  
-  try {
-    // Handle Spotify links - extract song name and search on YouTube
-    if (songQuery.includes('spotify.com')) {
-      message.reply('🔍 Searching for Spotify track on YouTube...');
-      // For now, tell user to search by name instead
-      return message.reply('❌ Spotify links are not supported yet. Please search by song name instead! Example: `>play song name`');
-    }
-    
-    // Check if it's a YouTube URL or search query
-    if (ytdl.validateURL(songQuery)) {
-      const songInfo = await ytdl.getInfo(songQuery);
-      song = {
-        title: songInfo.videoDetails.title,
-        url: songInfo.videoDetails.video_url,
-        duration: songInfo.videoDetails.lengthSeconds,
-      };
-    } else {
-      const searchResults = await ytsr(songQuery, { limit: 1 });
-      if (!searchResults || !searchResults.items || searchResults.items.length === 0) {
-        return message.reply('❌ No results found!');
-      }
-      const video = searchResults.items.find(item => item.type === 'video');
-      if (!video) {
-        return message.reply('❌ No results found!');
-      }
-      song = {
-        title: video.title,
-        url: video.url,
-        duration: video.duration,
-      };
-    }
-  } catch (error) {
-    console.error('Search error:', error);
-    return message.reply('❌ Error finding the song!');
-  }
-
-  if (!serverQueue) {
-    const queueConstructor = {
-      voiceChannel: voiceChannel,
-      textChannel: message.channel,
-      connection: null,
-      player: null,
-      songs: [],
-    };
-
-    queue.set(message.guild.id, queueConstructor);
-    queueConstructor.songs.push(song);
-
-    try {
-      const connection = joinVoiceChannel({
-        channelId: voiceChannel.id,
-        guildId: message.guild.id,
-        adapterCreator: message.guild.voiceAdapterCreator,
-      });
-
-      queueConstructor.connection = connection;
-      queueConstructor.player = createAudioPlayer();
-
-      connection.subscribe(queueConstructor.player);
-
-      // Handle connection errors
-      connection.on('error', error => {
-        console.error('Connection error:', error);
-        message.channel.send('❌ Voice connection error!');
-      });
-
-      connection.on('stateChange', (oldState, newState) => {
-        console.log(`Connection state: ${oldState.status} -> ${newState.status}`);
-      });
-
-      playSong(message.guild, queueConstructor.songs[0]);
-    } catch (error) {
-      console.error('Join error:', error);
-      queue.delete(message.guild.id);
-      return message.reply('❌ Error connecting to voice channel!');
-    }
-  } else {
-    serverQueue.songs.push(song);
-    return message.reply(`✅ **${song.title}** added to queue!`);
-  }
-}
-
-async function playSong(guild, song) {
-  const serverQueue = queue.get(guild.id);
-
-  if (!song) {
-    serverQueue.connection.destroy();
-    queue.delete(guild.id);
-    return;
-  }
-
-  try {
-    const stream = ytdl(song.url, {
-      filter: 'audioonly',
-      quality: 'highestaudio',
-      highWaterMark: 1 << 25,
-      dlChunkSize: 0
-    });
-
-    // Handle stream errors
-    stream.on('error', error => {
-      console.error('Stream error:', error);
-      serverQueue.textChannel.send('❌ Error streaming audio!');
-      serverQueue.songs.shift();
-      playSong(guild, serverQueue.songs[0]);
-    });
-
-    const resource = createAudioResource(stream, {
-      inputType: StreamType.Arbitrary,
-      inlineVolume: true
-    });
-
-    // Remove old listeners before adding new ones
-    serverQueue.player.removeAllListeners();
-
-    serverQueue.player.play(resource);
-
-    // Add listeners only once
-    serverQueue.player.once(AudioPlayerStatus.Idle, () => {
-      serverQueue.songs.shift();
-      playSong(guild, serverQueue.songs[0]);
-    });
-
-    serverQueue.player.once('error', error => {
-      console.error('Player error:', error);
-      serverQueue.textChannel.send('❌ Playback error!');
-      serverQueue.songs.shift();
-      playSong(guild, serverQueue.songs[0]);
-    });
-
-    // Send "Now playing" message only once
-    serverQueue.textChannel.send(`🎶 Now playing: **${song.title}**`);
-
-  } catch (error) {
-    console.error('PlaySong error:', error);
-    serverQueue.textChannel.send('❌ Error playing the song!');
-    serverQueue.songs.shift();
-    playSong(guild, serverQueue.songs[0]);
-  }
-}
-
-function skip(message) {
-  const serverQueue = queue.get(message.guild.id);
-  if (!message.member.voice.channel) {
-    return message.reply('❌ You need to be in a voice channel!');
-  }
-  if (!serverQueue) {
-    return message.reply('❌ Nothing is playing!');
-  }
-  serverQueue.player.stop();
-  message.reply('⏭️ Skipped!');
-}
-
-function stop(message) {
-  const serverQueue = queue.get(message.guild.id);
-  if (!message.member.voice.channel) {
-    return message.reply('❌ You need to be in a voice channel!');
-  }
-  if (!serverQueue) {
-    return message.reply('❌ Nothing is playing!');
-  }
-  serverQueue.songs = [];
-  serverQueue.player.stop();
-  serverQueue.connection.destroy();
-  queue.delete(message.guild.id);
-  message.reply('⏹️ Stopped and disconnected!');
-}
-
-function showQueue(message) {
-  const serverQueue = queue.get(message.guild.id);
-  if (!serverQueue || serverQueue.songs.length === 0) {
-    return message.reply('📭 Queue is empty!');
-  }
-  
-  let queueMessage = '**📃 Current Queue:**\n';
-  serverQueue.songs.forEach((song, index) => {
-    queueMessage += `${index + 1}. ${song.title}\n`;
-  });
-  
-  message.reply(queueMessage);
-}
-
-// Health check server for Render
+// Health check server for hosting services
 const http = require('http');
 const server = http.createServer((req, res) => {
   res.writeHead(200);
