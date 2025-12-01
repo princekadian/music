@@ -1,0 +1,23 @@
+{
+  "name": "discord-music-bot",
+  "version": "1.0.0",
+  "description": "Discord music bot with > prefix",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "keywords": ["discord", "bot", "music"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "@discordjs/voice": "^0.16.1",
+    "ytdl-core": "^4.11.5",
+    "yt-search": "^2.10.4",
+    "ffmpeg-static": "^5.2.0",
+    "opusscript": "^0.1.1"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  }
+}
