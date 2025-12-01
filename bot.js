@@ -161,8 +161,6 @@ async function playSong(guild, song) {
   }
 
   try {
-    serverQueue.textChannel.send(`🎶 Now playing: **${song.title}**`);
-
     const stream = ytdl(song.url, {
       filter: 'audioonly',
       quality: 'highestaudio',
@@ -183,22 +181,26 @@ async function playSong(guild, song) {
       inlineVolume: true
     });
 
+    // Remove old listeners before adding new ones
+    serverQueue.player.removeAllListeners();
+
     serverQueue.player.play(resource);
 
-    serverQueue.player.removeAllListeners(AudioPlayerStatus.Idle);
-    serverQueue.player.removeAllListeners('error');
-
-    serverQueue.player.on(AudioPlayerStatus.Idle, () => {
+    // Add listeners only once
+    serverQueue.player.once(AudioPlayerStatus.Idle, () => {
       serverQueue.songs.shift();
       playSong(guild, serverQueue.songs[0]);
     });
 
-    serverQueue.player.on('error', error => {
+    serverQueue.player.once('error', error => {
       console.error('Player error:', error);
       serverQueue.textChannel.send('❌ Playback error!');
       serverQueue.songs.shift();
       playSong(guild, serverQueue.songs[0]);
     });
+
+    // Send "Now playing" message only once
+    serverQueue.textChannel.send(`🎶 Now playing: **${song.title}**`);
 
   } catch (error) {
     console.error('PlaySong error:', error);
