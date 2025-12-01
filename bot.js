@@ -13,7 +13,7 @@ const client = new Client({
 
 const queue = new Map();
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   console.log(`Bot is ready and online!`);
 });
