@@ -1,7 +1,7 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
 const ytdl = require('@distube/ytdl-core');
-const yts = require('yt-search');
+const ytsr = require('ytsr');
 
 const client = new Client({
   intents: [
@@ -71,22 +71,28 @@ async function play_song(message, songQuery) {
   
   try {
     // Check if it's a URL or search query
-    let video;
-    if (songQuery.includes('youtube.com') || songQuery.includes('youtu.be')) {
-      video = await play.video_info(songQuery);
+    if (ytdl.validateURL(songQuery)) {
+      const songInfo = await ytdl.getInfo(songQuery);
+      song = {
+        title: songInfo.videoDetails.title,
+        url: songInfo.videoDetails.video_url,
+        duration: songInfo.videoDetails.lengthSeconds,
+      };
     } else {
-      const searched = await play.search(songQuery, { limit: 1 });
-      if (!searched || searched.length === 0) {
+      const searchResults = await ytsr(songQuery, { limit: 1 });
+      if (!searchResults || !searchResults.items || searchResults.items.length === 0) {
         return message.reply('❌ No results found!');
       }
-      video = searched[0];
+      const video = searchResults.items.find(item => item.type === 'video');
+      if (!video) {
+        return message.reply('❌ No results found!');
+      }
+      song = {
+        title: video.title,
+        url: video.url,
+        duration: video.duration,
+      };
     }
-
-    song = {
-      title: video.title,
-      url: video.url,
-      duration: video.durationInSec,
-    };
   } catch (error) {
     console.error(error);
     return message.reply('❌ Error finding the song!');
@@ -138,9 +144,15 @@ async function playSong(guild, song) {
   }
 
   try {
-    const stream = await play.stream(song.url);
-    const resource = createAudioResource(stream.stream, {
-      inputType: stream.type
+    const stream = ytdl(song.url, {
+      filter: 'audioonly',
+      quality: 'highestaudio',
+      highWaterMark: 1 << 25,
+      dlChunkSize: 0
+    });
+
+    const resource = createAudioResource(stream, {
+      inputType: StreamType.Arbitrary
     });
 
     serverQueue.player.play(resource);
@@ -206,5 +218,15 @@ function showQueue(message) {
   message.reply(queueMessage);
 }
 
+// Health check server for Render
+const http = require('http');
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Bot is running!');
+});
+server.listen(process.env.PORT || 8080, () => {
+  console.log('Health check server running on port', process.env.PORT || 8080);
+});
+
 // Login to Discord
-client.login(process.env.TOKEN || 'YOUR_BOT_TOKEN_HERE');
+client.login(process.env.TOKEN);
