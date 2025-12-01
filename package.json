@@ -13,7 +13,7 @@
     "discord.js": "^14.14.1",
     "@discordjs/voice": "^0.17.0",
     "@distube/ytdl-core": "^4.14.4",
-    "yt-search": "^2.10.4",
+    "ytsr": "^3.8.4",
     "ffmpeg-static": "^5.2.0",
     "libsodium-wrappers": "^0.7.13",
     "@discordjs/opus": "^0.9.0"
@@ -22,3 +22,28 @@
     "node": "18.x"
   }
 }
+```
+
+5. **Click "Commit changes"** button (green button at top right)
+6. **Add commit message:** "Update dependencies"
+7. **Click "Commit changes"** again
+
+---
+
+## 🎯 What This Does:
+
+- ✅ Removes `yt-search` (has the cheerio/undici bug)
+- ✅ Adds `ytsr` (better, no bugs)
+- ✅ Keeps all other working packages
+
+---
+
+## After Committing:
+
+Render will **automatically detect the change** and redeploy in ~2-3 minutes!
+
+Watch the logs - you should see:
+```
+Logged in as DJ Wala Tau#2202!
+Bot is ready and online!
+Health check server running on port 10000
